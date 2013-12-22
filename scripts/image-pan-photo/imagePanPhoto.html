@@ -1,0 +1,178 @@
+<html style="width:100%; height:100%; overflow:hidden">
+    <head>
+        <script src="zepto.min.js"></script>
+        <script src="underscore-min.js"></script>
+    </head>
+    <body style="width:100%; height:100%; overflow:hidden; margin:0">
+        <canvas id="myCanvas" width="640" height="360"></canvas>
+        <script src="three.min.js"></script>
+        <script src="rotationVectorUtil.js"></script>
+
+        <script>
+            var DBG = false;
+            RotationVectorUtil.DBG = DBG;
+            var thisImage = 'sagrada0.jpg',
+                // TODO don't hard code this
+                imageWidth = 2528,
+                imageHeight = 1856,
+                img = new Image();
+            img.src = thisImage;
+
+            window.requestAnimFrame = (function(callback) {
+                return window.requestAnimationFrame || window.webkitRequestAnimationFrame
+                        || window.mozRequestAnimationFrame || window.oRequestAnimationFrame
+                        || window.RequestAnimationFrame ||
+                        function(callback) {
+                            window.setTimeout(callback, 1000 / 60);
+                        };
+            })();
+
+            // UI behavior
+            var initialPause = 500;
+
+            // sensor parameters and auxiliary variables
+            var sensorInterval = .05;
+            var ptp = "No phi, theta, psi set.";
+            var ptpObj = null;
+            var q0i = null;
+            var q0iText = "No q0iText set.";
+            var tmpV3 = new THREE.Vector3();
+
+            // hard-coded from hardware parameters
+
+            var sourceX, sourceY, 
+                destHeight = 360,
+                destWidth = 640,
+                magnification = 2,
+                virtualDestWidth = Math.sqrt(Math.pow(destWidth, 2) + Math.pow(destHeight, 2)),
+                virtualDestHeight = virtualDestWidth,
+                destX = - (virtualDestWidth - destWidth) / 2,
+                destY = - (virtualDestHeight - destHeight) / 2,
+                defaultMagnification = 2,
+                magnification = defaultMagnification;
+
+            // Image Rectangle
+            var sourceX = 320, // arbitrary initializer
+                sourceY = 180, // arbitrary initializer
+                // tune this so the image stays stationary w.r.t. environment
+                // TODO: adjust to magnification
+                motionMultiplier = 13.0;
+
+            // derived drawing parameters
+            // TODO adjust sourcex in case it's out of bounds after zoom change
+            function setupViewParams() {
+                sourceWidth = virtualDestWidth / magnification,
+                sourceHeight = virtualDestHeight / magnification,
+                sourceXMax = Math.max(0, imageWidth - sourceWidth), // when zooming out this gets negative
+                sourceYMax = Math.max(0, imageHeight - sourceHeight), // when zooming out this gets negative
+                initialSourceX = imageWidth/2 - sourceWidth/2,
+                initialSourceY = imageHeight/2 - sourceHeight/2;
+            }
+
+            setupViewParams(defaultMagnification);
+
+            function cb(data) {
+                if (DBG) console.log("sensor callback called.");
+                if (data['type'] == 11) {
+                    var rv3 = new THREE.Vector3(data['values'][0],data['values'][1],data['values'][2]);
+                    if (q0i == null) {
+                        q0i = RotationVectorUtil.quatFromVector3(rv3).inverse();
+                        q0iText = RotationVectorUtil.quatToString(q0i);
+                        WS.say("Starting image pan sample");
+                    }
+                    var q = new THREE.Quaternion().copy(q0i).multiply(RotationVectorUtil.quatFromVector3(rv3));
+                    ptpObj = RotationVectorUtil.quatToPhiThetaPsi(q);
+                    ptp = "" + ptpObj.phi + ", " + ptpObj.theta + ", " + ptpObj.psi;
+                    sourceX = Math.min(sourceXMax,  Math.max(initialSourceX - motionMultiplier * ptpObj.phi, 0.0));
+                    sourceY = Math.min(sourceYMax, Math.max(initialSourceY + motionMultiplier * ptpObj.theta, 0.0));
+                }
+            }
+
+            function paramLog() {
+                str = "";
+                str += "sourceX: " + sourceX + "\n";
+                str += "sourceY: " + sourceY + "\n";
+                str += "sourceWidth: " + sourceWidth + "\n";
+                str += "sourceHeight: " + sourceHeight + "\n";
+                str += "destX: " + destX + "\n";
+                str += "destY: " + destY + "\n";
+                str += "virtualDestWidth: " + virtualDestWidth + "\n";
+                str += "virtualDestHeight: " + virtualDestHeight + "\n";
+                str += "motionMultiplier: " + motionMultiplier;
+                WS.log(str);
+            }
+
+            function animate(context) {
+                // clear
+                context.clearRect(0, 0, canvas.width, canvas.height);
+
+                // draw
+                context.save();
+                context.translate(canvas.width / 2, canvas.height / 2);
+                context.rotate(RotationVectorUtil.toRadians(-ptpObj.psi));
+                context.translate(-canvas.width / 2, -canvas.height / 2);
+                try {
+                    context.drawImage(img, sourceX, sourceY, sourceWidth, sourceHeight, destX, destY, virtualDestWidth, virtualDestHeight);
+                } catch(err) {
+                    //paramLog();
+                }                
+                context.restore();
+
+                // request new frame
+                requestAnimFrame(function() {
+                    animate(context);
+                });
+            }
+
+            function photoPath(data) {
+                WS.say("Got your new picture.");
+                WS.wake();
+                WS.activityCreate();
+                img.src = data;
+                WS.say("Done rendering.");
+            }
+
+            function onGesture(gesture) {
+                WS.log("onGesture: " + gesture);
+                if (gesture === 'SWIPE_LEFT') {
+                    WS.say("Zoom in");
+                    magnification *= 2;
+                    motionMultiplier /= 2;
+                    setupViewParams();
+                } else if (gesture === 'SWIPE_RIGHT') {
+                    WS.say("Zoom out");
+                    magnification /= 2;
+                    motionMultiplier *=2; 
+                    setupViewParams();
+                } else if (gesture === 'TAP') {
+                    WS.cameraPhotoPath('photoPath');
+                } else if (gesture === 'TWO_TAP') {
+                    WS.say("Recenter");
+                    q0i = null;
+                } else if (gesture == 'THREE_TAP') {
+                    WS.say("Logging view parameters");
+                    paramLog();
+                } else {
+                    WS.say(gesture.replace('_', ' '));
+                }
+            }
+
+            var canvas = document.getElementById('myCanvas');
+            var context = canvas.getContext('2d');
+
+            // wait before starting animation
+            setTimeout(function() {
+                var startTime = (new Date()).getTime();
+                animate(context);
+            }, initialPause);
+
+            $(function () {
+                WS.displayWebView();
+                if (DBG) console.log("Logging to console!! 23454248");
+                WS.sensorOn(11, sensorInterval, 'cb');
+                WS.gestureCallback('onGesture', 'onGesture');
+            });
+
+        </script>
+    </body>
+</html>
