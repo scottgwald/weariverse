@@ -9,9 +9,10 @@
         <script src="rotationVectorUtil.js"></script>
 
         <script>
-            var DBG = false;
+            var DBG = true;
             RotationVectorUtil.DBG = DBG;
-            var thisImage = 'sagrada0.jpg',
+            var thisImage = '',
+            // var thisImage = 'sagrada0.jpg',
                 // TODO don't hard code this
                 imageWidth = 2528,
                 imageHeight = 1856,
@@ -125,7 +126,7 @@
             }
 
             function photoPath(data) {
-                WS.say("Got your new picture.");
+                WS.say("Got your new picture");
                 WS.wake();
                 WS.activityCreate();
                 img.src = data;
@@ -168,7 +169,7 @@
 
             $(function () {
                 WS.displayWebView();
-                if (DBG) console.log("Logging to console!! 23454248");
+                if (DBG) console.log("Logging to console!! fuck shit stack");
                 WS.sensorOn(11, sensorInterval, 'cb');
                 WS.gestureCallback('onGesture', 'onGesture');
             });
